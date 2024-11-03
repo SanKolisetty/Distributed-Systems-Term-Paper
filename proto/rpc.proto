@@ -103,4 +103,5 @@ message StartViewRequest {
   repeated LogEntry log = 2;
   int64 opnumber = 3;
   int64 commitnumber = 4;
+  map<int64, int64> clientrequestid = 5;
 }
