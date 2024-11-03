@@ -151,35 +151,37 @@ func (s *server) broadcastVerify(logid, requestID, clientID int64, websiteName, 
 	doneCh := make(chan bool, s.replicaSize)
 	threshold := s.f - 1
 
-	for i := 1; i < s.replicaSize; i++ {
-		wg.Add(1)
-		go func(replicaID int) {
-			defer wg.Done()
-			// Connect to the replica
-			conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", 5000+replicaID), grpc.WithTransportCredentials(insecure.NewCredentials()))
-			if err != nil {
-				log.Printf("Replica %d: Error connecting to Replica %d", s.rep.ID, replicaID)
-				return
-			}
-			defer conn.Close()
-			log.Printf("Replica %d: Sending Prepare for Client %d's request with Request ID: %d to Replica %d with LogID: %d", s.rep.ID, clientID, requestID, replicaID, logid)
-			client := pb.NewReplicaServerClient(conn)
-			// Send a Prepare Request
-			resp, err := client.Prepare(context.Background(), &pb.PrepareRequest{
-				Logid:        logid,
-				Requestid:    requestID,
-				Clientid:     clientID,
-				Viewnumber:   int64(s.rep.View),
-				Websitename:  websiteName,
-				Address:      address,
-				Commitnumber: int64(s.rep.CommittedNumber),
-			})
-			if err == nil && resp.GetReceived() {
-				doneCh <- true
-			} else {
-				log.Printf("Replica %d: Failed to send Prepare to Replica %d", s.rep.ID, replicaID)
-			}
-		}(i)
+	for i := 0; i < s.replicaSize; i++ {
+		if i != s.rep.View {
+			wg.Add(1)
+			go func(replicaID int) {
+				defer wg.Done()
+				// Connect to the replica
+				conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", 5000+replicaID), grpc.WithTransportCredentials(insecure.NewCredentials()))
+				if err != nil {
+					log.Printf("Replica %d: Error connecting to Replica %d", s.rep.ID, replicaID)
+					return
+				}
+				defer conn.Close()
+				log.Printf("Replica %d: Sending Prepare for Client %d's request with Request ID: %d to Replica %d with LogID: %d", s.rep.ID, clientID, requestID, replicaID, logid)
+				client := pb.NewReplicaServerClient(conn)
+				// Send a Prepare Request
+				resp, err := client.Prepare(context.Background(), &pb.PrepareRequest{
+					Logid:        logid,
+					Requestid:    requestID,
+					Clientid:     clientID,
+					Viewnumber:   int64(s.rep.View),
+					Websitename:  websiteName,
+					Address:      address,
+					Commitnumber: int64(s.rep.CommittedNumber),
+				})
+				if err == nil && resp.GetReceived() {
+					doneCh <- true
+				} else {
+					log.Printf("Replica %d: Failed to send Prepare to Replica %d", s.rep.ID, replicaID)
+				}
+			}(i)
+		}
 	}
 
 	for i := 0; i < threshold; i++ {
@@ -204,7 +206,8 @@ func (s *server) Prepare(ctx context.Context, req *pb.PrepareRequest) (*pb.Prepa
 		log.Printf("Replica %d: %d is the logsize and received a request with logID: %d", s.rep.ID, len(s.rep.Log), logentry.LogID)
 		for len(s.rep.Log)+1 != logentry.LogID {
 		}
-		s.rep.CurLogID = logentry.LogID + 1
+		// s.rep.CurLogID = logentry.LogID + 1
+		s.rep.CurLogID = logentry.LogID 
 		s.rep.Log = append(s.rep.Log, logentry)
 		s.rep.ClientRequestID[logentry.ClientID] = logentry.RequestID
 		for i := min(req.Commitnumber-1, int64(len(s.rep.Log))); i >= 0; i-- {
@@ -344,7 +347,9 @@ func (s *server) sendStartViewChange() {
 				client := pb.NewReplicaServerClient(conn)
 				_, err = client.StartViewChange(context.Background(), &pb.StartViewChangeRequest{Replicaid: int64(s.rep.ID), Viewnumber: int64(s.rep.View)})
 				if err != nil {
-					log.Printf("Replica %d: Failed to send Prepare to Replica %d", s.rep.ID, replicaID)
+					log.Printf("Replica %d: Failed to send StartViewChange to Replica %d", s.rep.ID, replicaID)
+				} else {
+					log.Printf("Replica %d: Sent StartViewChange to Replica %d", s.rep.ID, replicaID)
 				}
 			}(i)
 		}
@@ -538,6 +543,7 @@ func (s *server) sendStartView() {
 					Opnumber:     int64(s.rep.CurLogID),
 					Commitnumber: int64(s.rep.CommittedNumber),
 					Log:          convertToProtoLogEntries(s.rep.Log),
+					Clientrequestid: convertMapIntToInt64(s.rep.ClientRequestID),
 				})
 				if err != nil {
 					log.Printf("Replica %d: Failed to send StartView to Replica %d", s.rep.ID, replicaID)
@@ -555,6 +561,7 @@ func (s *server) StartView(ctx context.Context, req *pb.StartViewRequest) (*empt
 	s.rep.CurLogID = int(req.Opnumber)
 	s.rep.CommittedNumber = int(req.Commitnumber)
 	s.rep.Log = convertProtoLogEntries(req.Log)
+	s.rep.ClientRequestID = convertMapInt64ToInt(req.Clientrequestid)
 	log.Printf("Replica %d: Received the new Primary Replica %d's StartView!", s.rep.ID, req.Viewnumber)
 	return &emptypb.Empty{}, nil
 }
