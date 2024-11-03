@@ -27,6 +27,7 @@ const (
 	ReplicaServer_ReceiveHeartBeat_FullMethodName = "/ReplicaServer/ReceiveHeartBeat"
 	ReplicaServer_StartViewChange_FullMethodName  = "/ReplicaServer/StartViewChange"
 	ReplicaServer_DoViewChange_FullMethodName     = "/ReplicaServer/DoViewChange"
+	ReplicaServer_StartView_FullMethodName        = "/ReplicaServer/StartView"
 )
 
 // ReplicaServerClient is the client API for ReplicaServer service.
@@ -40,6 +41,7 @@ type ReplicaServerClient interface {
 	ReceiveHeartBeat(ctx context.Context, in *HeartBeatRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	StartViewChange(ctx context.Context, in *StartViewChangeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	DoViewChange(ctx context.Context, in *DoViewChangeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	StartView(ctx context.Context, in *StartViewRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type replicaServerClient struct {
@@ -120,6 +122,16 @@ func (c *replicaServerClient) DoViewChange(ctx context.Context, in *DoViewChange
 	return out, nil
 }
 
+func (c *replicaServerClient) StartView(ctx context.Context, in *StartViewRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ReplicaServer_StartView_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ReplicaServerServer is the server API for ReplicaServer service.
 // All implementations must embed UnimplementedReplicaServerServer
 // for forward compatibility.
@@ -131,6 +143,7 @@ type ReplicaServerServer interface {
 	ReceiveHeartBeat(context.Context, *HeartBeatRequest) (*emptypb.Empty, error)
 	StartViewChange(context.Context, *StartViewChangeRequest) (*emptypb.Empty, error)
 	DoViewChange(context.Context, *DoViewChangeRequest) (*emptypb.Empty, error)
+	StartView(context.Context, *StartViewRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedReplicaServerServer()
 }
 
@@ -161,6 +174,9 @@ func (UnimplementedReplicaServerServer) StartViewChange(context.Context, *StartV
 }
 func (UnimplementedReplicaServerServer) DoViewChange(context.Context, *DoViewChangeRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DoViewChange not implemented")
+}
+func (UnimplementedReplicaServerServer) StartView(context.Context, *StartViewRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartView not implemented")
 }
 func (UnimplementedReplicaServerServer) mustEmbedUnimplementedReplicaServerServer() {}
 func (UnimplementedReplicaServerServer) testEmbeddedByValue()                       {}
@@ -309,6 +325,24 @@ func _ReplicaServer_DoViewChange_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ReplicaServer_StartView_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartViewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ReplicaServerServer).StartView(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ReplicaServer_StartView_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ReplicaServerServer).StartView(ctx, req.(*StartViewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ReplicaServer_ServiceDesc is the grpc.ServiceDesc for ReplicaServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -343,6 +377,10 @@ var ReplicaServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DoViewChange",
 			Handler:    _ReplicaServer_DoViewChange_Handler,
+		},
+		{
+			MethodName: "StartView",
+			Handler:    _ReplicaServer_StartView_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
