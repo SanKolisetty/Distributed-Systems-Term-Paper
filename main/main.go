@@ -103,6 +103,32 @@ func main() {
 				clientsArray[i].Requests = append(clientsArray[i].Requests, req)
 			}
 		}
+
+		var canFail, actualFailures int
+		if replicaSize%2 == 0 {
+			canFail = (replicaSize-2)/2
+		} else {
+			canFail = (replicaSize)/2 - 1
+		}
+		var finalTimeout int
+		marked := make(map[int]bool)
+		fmt.Printf("%d replicas can fail. Enter the number of failures: ", canFail)
+		fmt.Scan(&actualFailures)
+		fmt.Printf("%d replicas can fail. Enter the Replica ID and the time of its failure.\n", canFail)
+		for i := 0; i < actualFailures; i++ {
+			var id, timeofFail int
+			fmt.Scan(&id)
+			fmt.Scan(&timeofFail)
+			replicasArray[id].FailureTime = time.Duration(timeofFail)
+			finalTimeout = max(finalTimeout, timeofFail)
+			marked[id] = true
+		}
+		for i := 0; i < replicaSize; i++ {
+			if !marked[i] {
+				replicasArray[i].FailureTime = time.Duration(finalTimeout + 100)
+			}
+		}
+
 		for i := 0; i < replicaSize; i++ {
 			Initialize(&replicasArray[i], 5000 + i)
 			wg.Add(1)
@@ -117,7 +143,10 @@ func main() {
 		wg.Wait()
 
 		for i := 0; i < replicaSize; i++ {
-			replicasArray[i].PrintDetails()
+			if replicasArray[i].IsPrimary {
+				replicasArray[i].PrintDetails()
+				break
+			}
 		}
 	} else {
 		file, err := os.Open("input.txt")
@@ -162,7 +191,10 @@ func main() {
 		wg.Wait()
 
 		for i := 0; i < replicaSize; i++ {
-			replicasArray[i].PrintDetails()
+			if replicasArray[i].IsPrimary {
+				replicasArray[i].PrintDetails()
+				break
+			}
 		}
 	}
 	fmt.Println("Successfull!!")

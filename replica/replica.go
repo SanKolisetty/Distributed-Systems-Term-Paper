@@ -347,9 +347,9 @@ func (s *server) sendStartViewChange() {
 				client := pb.NewReplicaServerClient(conn)
 				_, err = client.StartViewChange(context.Background(), &pb.StartViewChangeRequest{Replicaid: int64(s.rep.ID), Viewnumber: int64(s.rep.View)})
 				if err != nil {
-					log.Printf("Replica %d: Failed to send StartViewChange to Replica %d", s.rep.ID, replicaID)
+					log.Printf("Replica %d: Failed to send StartViewChange to Replica %d for view %d", s.rep.ID, replicaID, s.rep.View)
 				} else {
-					log.Printf("Replica %d: Sent StartViewChange to Replica %d", s.rep.ID, replicaID)
+					log.Printf("Replica %d: Sent StartViewChange to Replica %d for view %d", s.rep.ID, replicaID, s.rep.View)
 				}
 			}(i)
 		}
@@ -363,7 +363,8 @@ func (s *server) StartViewChange(ctx context.Context, req *pb.StartViewChangeReq
 
 	view := int(req.Viewnumber)
 	if view >= s.rep.View {
-		s.rep.View = view
+		// s.rep.View = view
+		log.Printf("Replica %d: Received StartViewChange requests for view %d from Replica %d", s.rep.ID, req.Viewnumber, req.Replicaid)
 		// If this view has already been printed, ignore further requests for it
 		if s.rep.PrintedViews[view] {
 			return &emptypb.Empty{}, nil
@@ -377,8 +378,8 @@ func (s *server) StartViewChange(ctx context.Context, req *pb.StartViewChangeReq
 			log.Printf("Replica %d: Received %d StartViewChange requests for view %d", s.rep.ID, s.f, view)
 			s.rep.PrintedViews[view] = true // Mark this view as processed
 			if s.rep.View != s.rep.ID {
-				log.Printf("Replica %d: Sending DoViewChange to the new primary", s.rep.ID)
-				s.sendDoViewChange()
+				log.Printf("Replica %d: Sending DoViewChange to the new primary %d", s.rep.ID, req.Viewnumber)
+				go s.sendDoViewChange()
 			}
 		}
 	}
@@ -444,12 +445,6 @@ func convertMapInt64ToInt(input map[int64]int64) map[int]int {
 }
 
 func (s *server) sendDoViewChange() {
-	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", 5000+s.rep.View), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Printf("Replica %d: Error connecting to Replica %d", s.rep.ID, s.rep.View)
-	}
-	defer conn.Close()
-
 	var logents []*pb.LogEntry
 	for i := 0; i < len(s.rep.Log); i++ {
 		logent := &pb.LogEntry{
@@ -464,10 +459,17 @@ func (s *server) sendDoViewChange() {
 		logents = append(logents, logent)
 	}
 
+	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", 5000+s.rep.View), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Printf("Replica %d: Error connecting to Replica %d", s.rep.ID, s.rep.View)
+		go s.sendStartViewChange()
+		return
+	}
+	defer conn.Close()
 	client := pb.NewReplicaServerClient(conn)
 	t := time.Duration(rand.Intn(2) + 1)
 	time.Sleep(t * time.Second)
-	log.Printf("Replica %d: Calling DoViewChange now", s.rep.ID)
+	log.Printf("Replica %d: Calling DoViewChange now to Replica %d", s.rep.ID, s.rep.View)
 	_, err = client.DoViewChange(context.Background(), &pb.DoViewChangeRequest{
 		Replicaid:       int64(s.rep.ID),
 		Viewnumber:      int64(s.rep.View),
@@ -478,7 +480,9 @@ func (s *server) sendDoViewChange() {
 		Clientrequestid: convertMapIntToInt64(s.rep.ClientRequestID),
 	})
 	if err != nil {
-		log.Printf("Replica %d: Failed to send DoViewChange to Replica %d for view %d", s.rep.ID, s.rep.View, s.rep.View)
+		log.Printf("Replica %d: Failed to send DoViewChange to Replica %d for view %d: %v", s.rep.ID, s.rep.View, s.rep.View, err)
+		go s.sendStartViewChange()
+		return
 	}
 }
 
@@ -578,10 +582,10 @@ func (rep *Replica) Run(wg *sync.WaitGroup, port int, replicaSize int) {
 	rep.activityChan = make(chan struct{}, 1)
 
 	// Set a timeout for 40 seconds
-	timeout := 40 * time.Second
-	if rep.IsPrimary {
-		timeout = 10 * time.Second
-	}
+	timeout := rep.FailureTime * time.Second
+	// if rep.IsPrimary {
+	// 	timeout = 10 * time.Second
+	// }
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
