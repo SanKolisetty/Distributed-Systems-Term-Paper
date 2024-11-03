@@ -2,9 +2,9 @@ package replica
 
 import (
 	"context"
-	"math/rand"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"strconv"
 	"sync"
@@ -58,6 +58,7 @@ type server struct {
 	f           int             // Failure threshold
 	mu          sync.Mutex      // Mutex lock
 	ctx         context.Context // Context
+	wg          *sync.WaitGroup // WaitGroup
 }
 
 // Incrementing Log ID
@@ -399,40 +400,60 @@ func convertProtoLogEntries(protoEntries []*pb.LogEntry) []*LogEntry {
 	return entries
 }
 
+// Function to convert an array of custom LogEntry structs to an array of protobuf LogEntry messages
+func convertToProtoLogEntries(entries []*LogEntry) []*pb.LogEntry {
+	// Initialize a slice to hold the converted protobuf entries
+	protoEntries := make([]*pb.LogEntry, len(entries))
+	// Iterate over each LogEntry and convert it
+	for i, entry := range entries {
+		// Create a new protobuf LogEntry
+		protoEntries[i] = &pb.LogEntry{
+			LogID:     int64(entry.LogID),
+			RequestID: int64(entry.RequestID),
+			ClientID:  int64(entry.ClientID),
+			Operation: int64(entry.Operation),
+			Key:       entry.Key,
+			Value:     entry.Value,
+			Committed: entry.Committed,
+		}
+	}
+	return protoEntries
+}
+
 // Helper function to convert map[int]int to map[int64]int64
 func convertMapIntToInt64(input map[int]int) map[int64]int64 {
-    result := make(map[int64]int64, len(input))
-    for key, value := range input {
-        result[int64(key)] = int64(value)
-    }
-    return result
+	result := make(map[int64]int64, len(input))
+	for key, value := range input {
+		result[int64(key)] = int64(value)
+	}
+	return result
 }
 
 // Helper function to convert map[int64]int64 to map[int]int
 func convertMapInt64ToInt(input map[int64]int64) map[int]int {
-    result := make(map[int]int, len(input))
-    for key, value := range input {
-        result[int(key)] = int(value)
-    }
-    return result
+	result := make(map[int]int, len(input))
+	for key, value := range input {
+		result[int(key)] = int(value)
+	}
+	return result
 }
 
-func (s*server) sendDoViewChange() {
+func (s *server) sendDoViewChange() {
 	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", 5000+s.rep.View), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Printf("Replica %d: Error connecting to Replica %d", s.rep.ID, s.rep.View)
 	}
 	defer conn.Close()
-	
+
 	var logents []*pb.LogEntry
 	for i := 0; i < len(s.rep.Log); i++ {
 		logent := &pb.LogEntry{
-			LogID: int64(s.rep.Log[i].LogID),
+			LogID:     int64(s.rep.Log[i].LogID),
 			RequestID: int64(s.rep.Log[i].RequestID),
-			ClientID: int64(s.rep.Log[i].ClientID),
+			ClientID:  int64(s.rep.Log[i].ClientID),
 			Operation: int64(s.rep.Log[i].Operation),
-			Key: s.rep.Log[i].Key,
-			Value: s.rep.Log[i].Value,
+			Key:       s.rep.Log[i].Key,
+			Value:     s.rep.Log[i].Value,
 			Committed: s.rep.Log[i].Committed,
 		}
 		logents = append(logents, logent)
@@ -440,15 +461,15 @@ func (s*server) sendDoViewChange() {
 
 	client := pb.NewReplicaServerClient(conn)
 	t := time.Duration(rand.Intn(2) + 1)
-	time.Sleep(t*time.Second)
+	time.Sleep(t * time.Second)
 	log.Printf("Replica %d: Calling DoViewChange now", s.rep.ID)
 	_, err = client.DoViewChange(context.Background(), &pb.DoViewChangeRequest{
-		Replicaid: int64(s.rep.ID),
-		Viewnumber: int64(s.rep.View),
-		Prevviewnumber: int64(s.rep.View-1),
-		Opnumber: int64(s.rep.CurLogID),
-		Commitnumber: int64(s.rep.CommittedNumber),
-		Items: logents,
+		Replicaid:       int64(s.rep.ID),
+		Viewnumber:      int64(s.rep.View),
+		Prevviewnumber:  int64(s.rep.View - 1),
+		Opnumber:        int64(s.rep.CurLogID),
+		Commitnumber:    int64(s.rep.CommittedNumber),
+		Items:           logents,
 		Clientrequestid: convertMapIntToInt64(s.rep.ClientRequestID),
 	})
 	if err != nil {
@@ -483,6 +504,10 @@ func (s *server) DoViewChange(ctx context.Context, req *pb.DoViewChangeRequest) 
 				s.rep.IsPrimary = true
 				s.rep.ClientRequestID = convertMapInt64ToInt(selected.Clientrequestid)
 				log.Printf("Replica %d: Have become the primary now because of the request from %d", s.rep.ID, req.Replicaid)
+				log.Printf("Replica %d: Sending StartView to all the replicas", s.rep.ID)
+				s.wg.Add(1)
+				go s.sendHeartbeats(s.wg)
+				go s.sendStartView()
 			} else {
 				log.Printf("Replica %d: Have already become the primary, so won't be accepting the request from %d", s.rep.ID, req.Replicaid)
 			}
@@ -490,6 +515,47 @@ func (s *server) DoViewChange(ctx context.Context, req *pb.DoViewChangeRequest) 
 	} else {
 		log.Printf("Replica %d: Have already become the primary, so won't be accepting the request from %d", s.rep.ID, req.Replicaid)
 	}
+	return &emptypb.Empty{}, nil
+}
+
+func (s *server) sendStartView() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := 0; i < s.replicaSize; i++ {
+		if i != s.rep.View {
+			go func(replicaID int) {
+				// Connect to the replica
+				conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", 5000+replicaID), grpc.WithTransportCredentials(insecure.NewCredentials()))
+				if err != nil {
+					log.Printf("Replica %d: Error connecting to Replica %d", s.rep.ID, replicaID)
+					return
+				}
+				defer conn.Close()
+
+				client := pb.NewReplicaServerClient(conn)
+				_, err = client.StartView(context.Background(), &pb.StartViewRequest{
+					Viewnumber:   int64(s.rep.View),
+					Opnumber:     int64(s.rep.CurLogID),
+					Commitnumber: int64(s.rep.CommittedNumber),
+					Log:          convertToProtoLogEntries(s.rep.Log),
+				})
+				if err != nil {
+					log.Printf("Replica %d: Failed to send StartView to Replica %d", s.rep.ID, replicaID)
+				} else {
+					log.Printf("Replica %d: Successfully sent StartView to Replica %d", s.rep.ID, replicaID)
+				}
+			}(i)
+		}
+	}
+}
+
+func (s *server) StartView(ctx context.Context, req *pb.StartViewRequest) (*emptypb.Empty, error) {
+	s.rep.ViewChangeInProgress = false
+	s.rep.View = int(req.Viewnumber)
+	s.rep.CurLogID = int(req.Opnumber)
+	s.rep.CommittedNumber = int(req.Commitnumber)
+	s.rep.Log = convertProtoLogEntries(req.Log)
+	log.Printf("Replica %d: Received the new Primary Replica %d's StartView!", s.rep.ID, req.Viewnumber)
 	return &emptypb.Empty{}, nil
 }
 
@@ -512,27 +578,28 @@ func (rep *Replica) Run(wg *sync.WaitGroup, port int, replicaSize int) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	var serverWG sync.WaitGroup
+
 	// gRPC server initialization
 	s := &server{
 		rep:         rep,
 		replicaSize: replicaSize,
 		f:           replicaSize/2 + 1,
 		ctx:         ctx,
+		wg:          &serverWG,
 	}
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterReplicaServerServer(grpcServer, s)
 
-	var serverWG sync.WaitGroup
-
 	// Start heartbeat and inactivity monitoring goroutines if primary
 	if rep.IsPrimary {
-		serverWG.Add(1)
-		go s.sendHeartbeats(&serverWG)
+		s.wg.Add(1)
+		go s.sendHeartbeats(s.wg)
 	}
 
-	serverWG.Add(1)
-	go s.checkInactivity(&serverWG)
+	s.wg.Add(1)
+	go s.checkInactivity(s.wg)
 
 	// Start the gRPC server in a goroutine
 	go func() {
@@ -548,6 +615,6 @@ func (rep *Replica) Run(wg *sync.WaitGroup, port int, replicaSize int) {
 	// Gracefully stop the gRPC server and wait for goroutines to finish
 	grpcServer.GracefulStop()
 	log.Printf("gRPC server on port %d stopped gracefully", port)
-	serverWG.Wait()
+	s.wg.Wait()
 	log.Println("All background processes completed. Server fully shut down.")
 }

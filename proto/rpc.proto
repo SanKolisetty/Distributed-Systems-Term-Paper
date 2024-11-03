@@ -11,6 +11,7 @@ service ReplicaServer {
   rpc ReceiveHeartBeat (HeartBeatRequest) returns (google.protobuf.Empty) {}
   rpc StartViewChange (StartViewChangeRequest) returns (google.protobuf.Empty) {}
   rpc DoViewChange (DoViewChangeRequest) returns (google.protobuf.Empty) {}
+  rpc StartView (StartViewRequest) returns (google.protobuf.Empty) {}
 }
 
 // Request for reading an entry from the DNS
@@ -84,6 +85,7 @@ message LogEntry {
   bool Committed = 7;
 }
 
+// DoViewChange Request
 message DoViewChangeRequest {
   int64 replicaid = 1;
   int64 viewnumber = 2;
@@ -92,4 +94,13 @@ message DoViewChangeRequest {
   int64 commitnumber = 5;
   repeated LogEntry items = 6;
   map<int64, int64> clientrequestid = 7;
+}
+
+// StartView Request is sent by the new primary
+// to all the other replicas
+message StartViewRequest {
+  int64 viewnumber = 1;
+  repeated LogEntry log = 2;
+  int64 opnumber = 3;
+  int64 commitnumber = 4;
 }
