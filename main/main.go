@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-func InitializeDNS (rep *replica.Replica) {
-    rep.DNS = make(map[string]string)
+// Initializing the DNS of every replica
+func InitializeDNS(rep *replica.Replica) {
+	rep.DNS = make(map[string]string)
 	rep.DNS["Google"] = "127.0.0.0"
 	rep.DNS["YouTube"] = "127.0.0.1"
 	rep.DNS["Facebook"] = "127.0.0.2"
@@ -24,8 +25,9 @@ func InitializeDNS (rep *replica.Replica) {
 	rep.DNS["Yahoo"] = "127.0.0.8"
 }
 
+// Initializint the replica details
 func Initialize(rep *replica.Replica, port int) {
-    rep.ID = (port) % 5000
+	rep.ID = (port) % 5000
 	rep.Address = "127.0.0." + strconv.Itoa(port)
 	InitializeDNS(rep)
 	rep.View = 0
@@ -35,22 +37,25 @@ func Initialize(rep *replica.Replica, port int) {
 		rep.IsPrimary = false
 	}
 	rep.ViewChangeInProgress = false
-	rep.CurLogID = 0;
+	rep.CurLogID = 0
 	rep.ClientRequestID = make(map[int]int)
 	rep.CommittedNumber = 0
 	rep.Timeout = 5
-	rep.HeartBeatInterval = 10*time.Second
+	rep.HeartBeatInterval = 10 * time.Second
 	rep.ViewChangeCounts = make(map[int]int)
 	rep.PrintedViews = make(map[int]bool)
 }
 
-func InitializeClient(client * client.Client, id int) {
+// Initializing the Client details
+func InitializeClient(client *client.Client, id int) {
 	client.ID = id
 	client.View = 0
 	client.RequestID = 1
 }
 
+// Main function
 func main() {
+	// Setting an output file for logs
 	logFile, err := os.OpenFile("logs.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("Failed to open log file: %v", err)
@@ -58,10 +63,11 @@ func main() {
 	defer logFile.Close()
 	log.SetOutput(logFile)
 
-	var replicaSize int
-	var clientSize int
+	var replicaSize int // Number of replicas
+	var clientSize int  // Number of clients
 	var wg sync.WaitGroup
 
+	// Asking if the input will be taken from the terminal or from the input file
 	fmt.Print("Do you want to input from the terminal or the input file?\n")
 	fmt.Print("Type 0 for terminal and 1 for input file.\n")
 	var reply int
@@ -69,6 +75,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error reading input: %v", err)
 	}
+
+	// Input from terminal
 	if reply == 0 {
 		fmt.Print("Enter the number of Replicas: ")
 		_, err = fmt.Scan(&replicaSize)
@@ -106,7 +114,7 @@ func main() {
 
 		var canFail, actualFailures int
 		if replicaSize%2 == 0 {
-			canFail = (replicaSize-2)/2
+			canFail = (replicaSize - 2) / 2
 		} else {
 			canFail = (replicaSize)/2 - 1
 		}
@@ -130,9 +138,9 @@ func main() {
 		}
 
 		for i := 0; i < replicaSize; i++ {
-			Initialize(&replicasArray[i], 5000 + i)
+			Initialize(&replicasArray[i], 5000+i)
 			wg.Add(1)
-			go replicasArray[i].Run(&wg, 5000 + i, replicaSize)
+			go replicasArray[i].Run(&wg, 5000+i, replicaSize)
 		}
 
 		for i := 0; i < clientSize; i++ {
@@ -142,20 +150,16 @@ func main() {
 
 		wg.Wait()
 
-		for i := 0; i < replicaSize; i++ {
-			if replicasArray[i].IsPrimary {
-				replicasArray[i].PrintDetails()
-				break
-			}
-		}
 	} else {
+		// Input from the input file
+
 		file, err := os.Open("input.txt")
 		if err != nil {
 			fmt.Println("Error opening file:", err)
 			return
 		}
-		defer file.Close() 
-		
+		defer file.Close()
+
 		fmt.Fscanf(file, "%d\n", &replicaSize)
 		fmt.Fscanf(file, "%d\n", &clientSize)
 		fmt.Printf("%d %d\n", replicaSize, clientSize)
@@ -176,11 +180,27 @@ func main() {
 				clientsArray[i].Requests = append(clientsArray[i].Requests, req)
 			}
 		}
+		fails := 0
+		maxTimeout := 0
+		marked := make(map[int]bool)
 
+		fmt.Fscanf(file, "%d\n", &fails)
+		for i := 0; i < fails; i++ {
+			var id, timeofFail int
+			fmt.Fscanf(file, "%d %d\n", &id, &timeofFail)
+			replicasArray[id].FailureTime = time.Duration(timeofFail)
+			maxTimeout = max(maxTimeout, timeofFail)
+			marked[id] = true
+		}
 		for i := 0; i < replicaSize; i++ {
-			Initialize(&replicasArray[i], 5000 + i)
+			if !marked[i] {
+				replicasArray[i].FailureTime = time.Duration(maxTimeout + 100)
+			}
+		}
+		for i := 0; i < replicaSize; i++ {
+			Initialize(&replicasArray[i], 5000+i)
 			wg.Add(1)
-			go replicasArray[i].Run(&wg, 5000 + i, replicaSize)
+			go replicasArray[i].Run(&wg, 5000+i, replicaSize)
 		}
 
 		for i := 0; i < clientSize; i++ {
@@ -190,12 +210,6 @@ func main() {
 
 		wg.Wait()
 
-		for i := 0; i < replicaSize; i++ {
-			if replicasArray[i].IsPrimary {
-				replicasArray[i].PrintDetails()
-				break
-			}
-		}
 	}
 	fmt.Println("Successfull!!")
 }

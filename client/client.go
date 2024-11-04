@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// Request struct to hold the details of a request
 type Request struct {
 	RequestType int    // 0 for Read, 1 for Write
 	Key         string // Key
@@ -22,21 +23,25 @@ type Request struct {
 	Modified    bool   // Modified is true when the operation is successful
 }
 
+// Client struct to hold the details of a client
 type Client struct {
-	ID        int
-	View      int
-	RequestID int
-	Requests  []*Request
+	ID        int        // ID of the client
+	View      int        // Current view of the client
+	RequestID int        // Latest Request ID
+	Requests  []*Request // Set of requests by the client
 }
 
+// Initial address of the primary
 var (
 	addr = "localhost:5000"
 )
 
+// Run method for Client
 func (client *Client) Run() {
 	flag.Parse()
 	rand.Seed(time.Now().UnixNano())
 
+	// Connects to the primary
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
@@ -52,7 +57,9 @@ func (client *Client) Run() {
 	// Define the number of retries allowed before incrementing the view
 	const maxRetries = 3
 
+	// Completes all requests
 	for i := 0; i < len(client.Requests); i++ {
+		// Sleeps for a random amount of time
 		randomInt := rand.Intn(2) + 1
 		time.Sleep(time.Duration(randomInt) * time.Second)
 		var err error
@@ -91,7 +98,7 @@ func (client *Client) Run() {
 			time.Sleep(5 * time.Second) // Wait before retrying
 		}
 
-		// After max retries, if err still exists, increment the view and break out of the main loop
+		// After max retries, if err still exists, increment the view and skips the request
 		if err != nil {
 			log.Printf("Client %d: Failed after %d attempts, increasing view to %d\n", client.ID, maxRetries, client.View+1)
 			client.View++
