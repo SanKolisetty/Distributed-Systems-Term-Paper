@@ -40,6 +40,7 @@ type Replica struct {
 	DoViewChangeCount    []*pb.DoViewChangeRequest // DoViewChange Requests received
 }
 
+// Struct for containing all the details of a Log Entry
 type LogEntry struct {
 	LogID     int    // Log ID: Index of the entry
 	RequestID int    // Request ID at the client
@@ -224,6 +225,7 @@ func (s *server) Prepare(ctx context.Context, req *pb.PrepareRequest) (*pb.Prepa
 	return &pb.PrepareOKReply{Received: false}, nil
 }
 
+// Commit RPCs: Commits the entries
 func (s *server) Commit(ctx context.Context, req *pb.CommitRequest) (*emptypb.Empty, error) {
 	for len(s.rep.Log) < int(req.GetCommitnumber()) {
 	}
@@ -234,17 +236,19 @@ func (s *server) Commit(ctx context.Context, req *pb.CommitRequest) (*emptypb.Em
 	return &emptypb.Empty{}, nil
 }
 
+// Function to print the current details of a Replica
 func (rep *Replica) PrintDetails() {
-	fmt.Printf("ID: %d\n", rep.ID)
-	fmt.Printf("Address: %s\n", rep.Address)
-	fmt.Println("DNS:")
+	log.Printf("Replica %d: Printing the final details of the Primary Replica", rep.ID)
+	log.Printf("ID: %d\n", rep.ID)
+	log.Printf("Address: %s\n", rep.Address)
+	log.Println("DNS:")
 	for key, value := range rep.DNS {
-		fmt.Printf("Key: %s, Value: %s\n", key, value)
+		log.Printf("Key: %s, Value: %s\n", key, value)
 	}
-	fmt.Printf("View: %d\n", rep.View)
-	fmt.Printf("IsPrimary: %v\n", rep.IsPrimary)
+	log.Printf("View: %d\n", rep.View)
+	log.Printf("IsPrimary: %v\n", rep.IsPrimary)
 	for i := 0; i < len(rep.Log); i++ {
-		fmt.Printf("Log ID: %d, Key: %s, Value: %v\n", rep.Log[i].LogID, rep.Log[i].Key, rep.Log[i].Value)
+		log.Printf("Log ID: %d, Key: %s, Value: %v\n", rep.Log[i].LogID, rep.Log[i].Key, rep.Log[i].Value)
 	}
 }
 
@@ -328,6 +332,7 @@ func (s *server) sendHeartbeats(wg *sync.WaitGroup) {
 	}
 }
 
+// Sends StartViewChange to all the replicas
 func (s *server) sendStartViewChange() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -444,6 +449,7 @@ func convertMapInt64ToInt(input map[int64]int64) map[int]int {
 	return result
 }
 
+// Sends DoViewChange to the new found primary
 func (s *server) sendDoViewChange() {
 	var logents []*pb.LogEntry
 	for i := 0; i < len(s.rep.Log); i++ {
@@ -462,6 +468,7 @@ func (s *server) sendDoViewChange() {
 	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", 5000+s.rep.View), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Printf("Replica %d: Error connecting to Replica %d", s.rep.ID, s.rep.View)
+		time.Sleep(time.Duration(rand.Intn(3)+1))
 		go s.sendStartViewChange()
 		return
 	}
@@ -478,14 +485,17 @@ func (s *server) sendDoViewChange() {
 		Commitnumber:    int64(s.rep.CommittedNumber),
 		Items:           logents,
 		Clientrequestid: convertMapIntToInt64(s.rep.ClientRequestID),
+		DNS: s.rep.DNS,
 	})
 	if err != nil {
 		log.Printf("Replica %d: Failed to send DoViewChange to Replica %d for view %d: %v", s.rep.ID, s.rep.View, s.rep.View, err)
+		time.Sleep(time.Duration(rand.Intn(3)+1))
 		go s.sendStartViewChange()
 		return
 	}
 }
 
+// DoViewChange RPC
 func (s *server) DoViewChange(ctx context.Context, req *pb.DoViewChangeRequest) (*emptypb.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -512,6 +522,7 @@ func (s *server) DoViewChange(ctx context.Context, req *pb.DoViewChangeRequest) 
 				s.rep.ViewChangeInProgress = false
 				s.rep.IsPrimary = true
 				s.rep.ClientRequestID = convertMapInt64ToInt(selected.Clientrequestid)
+				s.rep.DNS = selected.DNS
 				log.Printf("Replica %d: Have become the primary now because of the request from %d", s.rep.ID, req.Replicaid)
 				log.Printf("Replica %d: Sending StartView to all the replicas", s.rep.ID)
 				s.wg.Add(1)
@@ -527,6 +538,8 @@ func (s *server) DoViewChange(ctx context.Context, req *pb.DoViewChangeRequest) 
 	return &emptypb.Empty{}, nil
 }
 
+// Sends StartView to all replicas; sent by the new primary 
+// to show that it has become the new primary 
 func (s *server) sendStartView() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -548,6 +561,7 @@ func (s *server) sendStartView() {
 					Commitnumber: int64(s.rep.CommittedNumber),
 					Log:          convertToProtoLogEntries(s.rep.Log),
 					Clientrequestid: convertMapIntToInt64(s.rep.ClientRequestID),
+					DNS: s.rep.DNS,
 				})
 				if err != nil {
 					log.Printf("Replica %d: Failed to send StartView to Replica %d", s.rep.ID, replicaID)
@@ -559,6 +573,8 @@ func (s *server) sendStartView() {
 	}
 }
 
+// StartView RPC: Sent by the new primary to all
+// the other replicas
 func (s *server) StartView(ctx context.Context, req *pb.StartViewRequest) (*emptypb.Empty, error) {
 	s.rep.ViewChangeInProgress = false
 	s.rep.View = int(req.Viewnumber)
@@ -566,6 +582,7 @@ func (s *server) StartView(ctx context.Context, req *pb.StartViewRequest) (*empt
 	s.rep.CommittedNumber = int(req.Commitnumber)
 	s.rep.Log = convertProtoLogEntries(req.Log)
 	s.rep.ClientRequestID = convertMapInt64ToInt(req.Clientrequestid)
+	s.rep.DNS = req.DNS
 	log.Printf("Replica %d: Received the new Primary Replica %d's StartView!", s.rep.ID, req.Viewnumber)
 	return &emptypb.Empty{}, nil
 }

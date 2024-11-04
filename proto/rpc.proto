@@ -94,6 +94,7 @@ message DoViewChangeRequest {
   int64 commitnumber = 5;
   repeated LogEntry items = 6;
   map<int64, int64> clientrequestid = 7;
+  map<string, string> DNS = 8;
 }
 
 // StartView Request is sent by the new primary
@@ -104,4 +105,5 @@ message StartViewRequest {
   int64 opnumber = 3;
   int64 commitnumber = 4;
   map<int64, int64> clientrequestid = 5;
+  map<string, string> DNS = 6;
 }
